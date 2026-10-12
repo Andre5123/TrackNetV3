@@ -3,3 +3,16 @@ ckpts/
 __pycache__/
 utils/__pycache__/
 *.mp4
+
+# Local Python environment
+.venv/
+
+# Shuttlecock Trajectory Dataset: no license, never redistribute
+TrackNetV2/
+
+# Prediction outputs from predict.py
+prediction*/
+
+# Team-internal notes and documents: keep off the public fork
+TRACKNET_HANDOFF.md
+*.docx
