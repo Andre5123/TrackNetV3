@@ -30,7 +30,7 @@ pred_types_map = {pred_type: i for i, pred_type in enumerate(pred_types)}
 inpaintnet_eval_types = ['inpaint', 'reconstruct', 'baseline']
 
 
-def get_ensemble_weight(seq_len, eval_mode):
+def get_ensemble_weight(seq_len, eval_mode, lookahead=0):
     """ Get weight for temporal ensemble.
 
         Args:
@@ -39,12 +39,19 @@ def get_ensemble_weight(seq_len, eval_mode):
                 Choices:
                     - 'average': Return uniform weight
                     - 'weight': Return positional weight
-        
+                    - 'lookahead': Return uniform weight over the windows that end at most
+                                   `lookahead` frames after the target frame (0 = causal)
+            lookahead (int): Number of future frames allowed, only for 'lookahead' mode
+
         Returns:
             weight (torch.Tensor): Weight for temporal ensemble
     """
 
-    if eval_mode == 'average':
+    if eval_mode == 'lookahead':
+        # Entry j is the window that ends j frames after the target frame
+        weight = torch.zeros(seq_len)
+        weight[:lookahead+1] = 1 / (lookahead+1)
+    elif eval_mode == 'average':
         weight = torch.ones(seq_len) / seq_len
     elif eval_mode == 'weight':
         weight = torch.ones(seq_len)
@@ -645,7 +652,7 @@ def test_rally(model, rally_dir, param_dict, save_inpaint_mask=False):
             # Create dataset with overlap sampling for temporal ensemble
             dataset = Shuttlecock_Trajectory_Dataset(seq_len=seq_len, sliding_step=1, data_mode='heatmap', bg_mode=param_dict['bg_mode'], rally_dir=rally_dir)
             data_loader = DataLoader(dataset, batch_size=param_dict['batch_size'], shuffle=False, num_workers=param_dict['num_workers'], drop_last=False)
-            weight = get_ensemble_weight(seq_len, param_dict['eval_mode'])
+            weight = get_ensemble_weight(seq_len, param_dict['eval_mode'], param_dict.get('lookahead', 0))
 
             # Init buffer parameters
             num_sample, sample_count = len(dataset), 0
@@ -925,7 +932,8 @@ if __name__ == '__main__':
     parser.add_argument('--split', type=str, default='test', choices=['train', 'val', 'test'], help='dataset split for testing')
     parser.add_argument('--batch_size', type=int, default=16, help='batch size for testing')
     parser.add_argument('--tolerance', type=float, default=4, help='difference tolerance of center distance between prediction and ground truth in input size')
-    parser.add_argument('--eval_mode', type=str, default='weight', choices=['nonoverlap', 'average', 'weight'], help='evaluation mode')
+    parser.add_argument('--eval_mode', type=str, default='weight', choices=['nonoverlap', 'average', 'weight', 'lookahead'], help='evaluation mode')
+    parser.add_argument('--lookahead', type=int, default=0, choices=range(8), help='future frames allowed in lookahead mode (0 = causal)')
     parser.add_argument('--video_file', type=str, default='', help='file path of the video with label (must in dataset directory with same data_dir)')
     parser.add_argument('--output_pred', action='store_true', default=False, help='whether to output detail prediction result for error analysis')
     parser.add_argument('--output_bbox', action='store_true', default=False, help='whether to output coco format bbox prediction result for mAP evaluation')
