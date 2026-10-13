@@ -10,8 +10,10 @@ utils/__pycache__/
 # Shuttlecock Trajectory Dataset: no license, never redistribute
 TrackNetV2/
 
-# Prediction outputs from predict.py
+# Prediction and evaluation outputs
 prediction*/
+output/
+preprocess_log.txt
 
 # Team-internal notes and documents: keep off the public fork
 TRACKNET_HANDOFF.md
