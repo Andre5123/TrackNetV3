@@ -677,7 +677,8 @@ class Video_IterableDataset(IterableDataset):
         WIDTH=WIDTH,
         max_sample_num=1800,
         video_range=None,
-        median=None
+        median=None,
+        window_median=False
     ):
         """ Initialize the dataset
             Args:
@@ -695,6 +696,8 @@ class Video_IterableDataset(IterableDataset):
                 max_sample_num (int): Maximum number of frames to sample for generating median image.
                 video_range (Tuple[int]): Range of start second and end second of the video for generating median image.
                 median (np.ndarray): Median image.
+                window_median (bool): Use the median of each window's own frames as its background
+                    (only for bg_mode 'concat'), instead of one median image for the whole video.
         """
         # Image size
         self.HEIGHT = HEIGHT
@@ -711,7 +714,9 @@ class Video_IterableDataset(IterableDataset):
         self.seq_len = seq_len
         self.sliding_step = sliding_step
         self.bg_mode = bg_mode
-        if self.bg_mode:
+        self.window_median = window_median
+        assert not window_median or bg_mode == 'concat', 'window_median only supports bg_mode "concat"'
+        if self.bg_mode and not self.window_median:
             self.median = median if median is not None else self.__gen_median__(max_sample_num, video_range)
 
     def __iter__(self):
@@ -728,6 +733,10 @@ class Video_IterableDataset(IterableDataset):
                     break
                 frame_list.append(frame)
                 end_f_id += 1
+
+            # No frames left over (video length was a multiple of the step): nothing to pad
+            if not frame_list:
+                break
 
             # Form a sequence
             data_idx = [(0, i) for i in range(start_f_id, end_f_id)]
@@ -782,7 +791,11 @@ class Video_IterableDataset(IterableDataset):
     
     def __process__(self, imgs):
         """ Process the frame sequence. """
-        if self.bg_mode:
+        if self.window_median:
+            # Background from this window's own frames: (H, W, 3) -> resized (3, HEIGHT, WIDTH)
+            median_img = Image.fromarray(np.median(imgs, 0).astype('uint8'))
+            median_img = np.moveaxis(np.array(median_img.resize(size=(self.WIDTH, self.HEIGHT))), -1, 0)
+        elif self.bg_mode:
             median_img = self.median
         frames = np.array([]).reshape(0, self.HEIGHT, self.WIDTH)
         for i in range(self.seq_len):

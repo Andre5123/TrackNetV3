@@ -96,9 +96,11 @@ if __name__ == '__main__':
     parser.add_argument('--video_range', type=lambda splits: [int(s) for s in splits.split(',')], default=None, help='range of start second and end second of the video for generating median image')
     parser.add_argument('--save_dir', type=str, default='pred_result', help='directory to save the prediction result')
     parser.add_argument('--large_video', action='store_true', default=False, help='whether to process large video')
+    parser.add_argument('--window_median', action='store_true', default=False, help='background = median of each window\'s own frames (needs --large_video)')
     parser.add_argument('--output_video', action='store_true', default=False, help='whether to output video with predicted trajectory')
     parser.add_argument('--traj_len', type=int, default=8, help='length of trajectory to draw on video')
     args = parser.parse_args()
+    assert not args.window_median or args.large_video, '--window_median needs --large_video'
 
     num_workers = args.batch_size if args.batch_size <= 16 else 16
     video_file = args.video_file
@@ -148,8 +150,9 @@ if __name__ == '__main__':
     if args.eval_mode == 'nonoverlap':
         # Create dataset with non-overlap sampling
         if large_video:
-            dataset = Video_IterableDataset(video_file, seq_len=seq_len, sliding_step=seq_len, bg_mode=bg_mode, 
-                                            max_sample_num=args.max_sample_num, video_range=video_range)
+            dataset = Video_IterableDataset(video_file, seq_len=seq_len, sliding_step=seq_len, bg_mode=bg_mode,
+                                            max_sample_num=args.max_sample_num, video_range=video_range,
+                                            window_median=args.window_median)
             data_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
             print(f'Video length: {dataset.video_len}')
         else:
@@ -172,7 +175,8 @@ if __name__ == '__main__':
         # Create dataset with overlap sampling for temporal ensemble
         if large_video:
             dataset = Video_IterableDataset(video_file, seq_len=seq_len, sliding_step=1, bg_mode=bg_mode,
-                                            max_sample_num=args.max_sample_num, video_range=video_range)
+                                            max_sample_num=args.max_sample_num, video_range=video_range,
+                                            window_median=args.window_median)
             data_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
             video_len = dataset.video_len
             print(f'Video length: {video_len}')
