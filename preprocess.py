@@ -1,6 +1,8 @@
 import os
 import parse
 import shutil
+import pandas as pd
+from tqdm import tqdm
 
 from dataset import data_dir
 from utils.general import list_dirs, generate_data_frames, get_num_frames, get_match_median
@@ -24,6 +26,12 @@ if os.path.exists('corrected_test_label'):
 for split in ['train', 'test']:
     split_frame_count = 0
     match_dirs = list_dirs(os.path.join(data_dir, split))
+
+    # Progress bar over frames: frames are extracted up to each rally's label count
+    csv_files = [csv_file for match_dir in match_dirs for csv_file in list_dirs(os.path.join(match_dir, 'csv'))]
+    total_frames = sum(len(pd.read_csv(csv_file)) for csv_file in csv_files)
+    progress = tqdm(total=total_frames, desc=f'{split} frames', unit='frame')
+
     for match_dir in match_dirs:
         match_frame_count = 0
         file_format_str = os.path.join('{}', 'match{}')
@@ -35,12 +43,14 @@ for split in ['train', 'test']:
             _, video_name = parse.parse(file_format_str, video_file)
             rally_dir = os.path.join(match_dir, 'frame', video_name)
             video_frame_count = get_num_frames(rally_dir)
-            print(f'[{split} / match{match_id} / {video_name}]\tvideo frames: {video_frame_count}')
+            progress.write(f'[{split} / match{match_id} / {video_name}]\tvideo frames: {video_frame_count}')
+            progress.update(video_frame_count)
             match_frame_count += video_frame_count
         get_match_median(match_dir)
-        print(f'[{split} / match{match_id}]:\ttotal frames: {match_frame_count}')
+        progress.write(f'[{split} / match{match_id}]:\ttotal frames: {match_frame_count}')
         split_frame_count += match_frame_count
-    
+
+    progress.close()
     print(f'[{split}]:\ttotal frames: {split_frame_count}')
 
 # Form validation set

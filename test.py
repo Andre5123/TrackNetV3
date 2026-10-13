@@ -16,6 +16,14 @@ from dataset import Shuttlecock_Trajectory_Dataset, data_dir
 from utils.general import *
 from utils.metric import *
 
+# Use an NVIDIA GPU if present, then Apple Silicon, else CPU (same rule as predict.py)
+if torch.cuda.is_available():
+    device = torch.device('cuda')
+elif torch.backends.mps.is_available():
+    device = torch.device('mps')
+else:
+    device = torch.device('cpu')
+
 
 pred_types = ['TP', 'TN', 'FP1', 'FP2', 'FN']
 pred_types_map = {pred_type: i for i, pred_type in enumerate(pred_types)}
@@ -336,7 +344,7 @@ def eval_tracknet(model, data_loader, param_dict):
         data_prob = data_loader
     
     for step, (i, x, y, _, _) in enumerate(data_prob):
-        x, y = x.float().cuda(), y.float().cuda()
+        x, y = x.float().to(device), y.float().to(device)
         with torch.no_grad():
             y_pred = model(x)
 
@@ -394,7 +402,7 @@ def eval_inpaintnet(model, data_loader, param_dict):
         data_prob = data_loader
 
     for step, (i, coor_pred, coor, _, _, inpaint_mask) in enumerate(data_prob):
-        coor_pred, coor, inpaint_mask = coor_pred.float().cuda(), coor.float().cuda(), inpaint_mask.float().cuda()
+        coor_pred, coor, inpaint_mask = coor_pred.float().to(device), coor.float().to(device), inpaint_mask.float().to(device)
         
         with torch.no_grad():
             coor_inpaint = model(coor_pred, inpaint_mask)
@@ -548,6 +556,9 @@ def test(model, split, param_dict, save_inpaint_mask=False, linear_interp=False)
     if param_dict['debug']:
         rally_dirs = rally_dirs[:1]
     
+    # Overall progress bar over frames, advanced once per rally
+    progress = tqdm(total=sum(get_num_frames(rally_dir) for rally_dir in rally_dirs), desc=f'{split} frames', unit='frame')
+
     for rally_dir in rally_dirs:
         # Parse rally directory to form rally key
         file_format_str = os.path.join('{}', 'frame', '{}')
@@ -561,13 +572,15 @@ def test(model, split, param_dict, save_inpaint_mask=False, linear_interp=False)
         else:
             tmp_pred = test_rally(model, rally_dir, param_dict, save_inpaint_mask=save_inpaint_mask)
         pred_dict[rally_key] = tmp_pred
+        progress.update(get_num_frames(rally_dir))
 
         if save_inpaint_mask:
             if not os.path.exists(os.path.join(match_dir, 'predicted_csv')):
                 os.makedirs(os.path.join(match_dir, 'predicted_csv'))
             csv_file = os.path.join(match_dir, 'predicted_csv',f'{rally_id}_ball.csv')
             write_pred_csv(tmp_pred, save_file=csv_file, save_inpaint_mask=save_inpaint_mask)
-    
+
+    progress.close()
     return pred_dict
 
 def test_rally(model, rally_dir, param_dict, save_inpaint_mask=False):
@@ -616,7 +629,7 @@ def test_rally(model, rally_dir, param_dict, save_inpaint_mask=False):
             
             data_prob = tqdm(data_loader) if param_dict['verbose'] else data_loader
             for step, (i, x, y, _, _) in enumerate(data_prob):
-                x = x.float().cuda()
+                x = x.float().to(device)
                 with torch.no_grad():
                     y_pred = tracknet(x).detach().cpu()
                 
@@ -643,7 +656,7 @@ def test_rally(model, rally_dir, param_dict, save_inpaint_mask=False):
 
             data_prob = tqdm(data_loader) if param_dict['verbose'] else data_loader
             for step, (i, x, y, _, _) in enumerate(data_prob):
-                x = x.float().cuda()
+                x = x.float().to(device)
                 b_size, seq_len = i.shape[0], i.shape[1]
                 with torch.no_grad():
                     y_pred = tracknet(x).detach().cpu()
@@ -708,7 +721,7 @@ def test_rally(model, rally_dir, param_dict, save_inpaint_mask=False):
             for step, (i, coor_pred, coor, _, _, inpaint_mask) in enumerate(data_prob):
                 coor_pred, coor, inpaint_mask = coor_pred.float(), coor.float(), inpaint_mask.float()
                 with torch.no_grad():
-                    coor_inpaint = inpaintnet(coor_pred.cuda(), inpaint_mask.cuda()).detach().cpu()
+                    coor_inpaint = inpaintnet(coor_pred.to(device), inpaint_mask.to(device)).detach().cpu()
                     coor_inpaint = coor_inpaint * inpaint_mask + coor_pred * (1-inpaint_mask) # replace predicted coordinates with inpainted coordinates
                 
                 # Thresholding
@@ -737,7 +750,7 @@ def test_rally(model, rally_dir, param_dict, save_inpaint_mask=False):
                 coor_pred, coor, inpaint_mask = coor_pred.float(), coor.float(), inpaint_mask.float()
                 b_size = i.shape[0]
                 with torch.no_grad():
-                    coor_inpaint = inpaintnet(coor_pred.cuda(), inpaint_mask.cuda()).detach().cpu()
+                    coor_inpaint = inpaintnet(coor_pred.to(device), inpaint_mask.to(device)).detach().cpu()
                     coor_inpaint = coor_inpaint * inpaint_mask + coor_pred * (1 - inpaint_mask) # replace predicted coordinates with inpainted coordinates
                 
                 # Thresholding
@@ -808,7 +821,7 @@ def test_rally_linear(model, rally_dir, param_dict):
         
         data_prob = tqdm(data_loader) if param_dict['verbose'] else data_loader
         for step, (i, x, y, _, _) in enumerate(data_prob):
-            x = x.float().cuda()
+            x = x.float().to(device)
             with torch.no_grad():
                 y_pred = tracknet(x).detach().cpu()
             
@@ -831,7 +844,7 @@ def test_rally_linear(model, rally_dir, param_dict):
 
         data_prob = tqdm(data_loader) if param_dict['verbose'] else data_loader
         for step, (i, x, y, _, _) in enumerate(data_prob):
-            x = x.float().cuda()
+            x = x.float().to(device)
             b_size, seq_len = i.shape[0], i.shape[1]
             with torch.no_grad():
                 y_pred = tracknet(x).detach().cpu()
@@ -933,19 +946,19 @@ if __name__ == '__main__':
     # Load parameter
     print(f'Loading checkpoint...')
     if args.tracknet_file:
-        tracknet_ckpt = torch.load(args.tracknet_file)
+        tracknet_ckpt = torch.load(args.tracknet_file, map_location=device)
         param_dict['tracknet_seq_len'] = tracknet_ckpt['param_dict']['seq_len']
         param_dict['bg_mode'] = tracknet_ckpt['param_dict']['bg_mode']
-        tracknet = get_model('TrackNet', seq_len=param_dict['tracknet_seq_len'], bg_mode=param_dict['bg_mode']).cuda()
+        tracknet = get_model('TrackNet', seq_len=param_dict['tracknet_seq_len'], bg_mode=param_dict['bg_mode']).to(device)
         tracknet.load_state_dict(tracknet_ckpt['model'])
         model = (tracknet, None)
     else:
         tracknet = None
     
     if args.inpaintnet_file:
-        inpaintnet_ckpt = torch.load(args.inpaintnet_file)
+        inpaintnet_ckpt = torch.load(args.inpaintnet_file, map_location=device)
         param_dict['inpaintnet_seq_len'] = inpaintnet_ckpt['param_dict']['seq_len']
-        inpaintnet = get_model('InpaintNet').cuda()
+        inpaintnet = get_model('InpaintNet').to(device)
         inpaintnet.load_state_dict(inpaintnet_ckpt['model'])
         model = (tracknet, inpaintnet)
 
