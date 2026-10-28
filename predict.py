@@ -1,4 +1,5 @@
 import os
+import math
 import argparse
 import numpy as np
 from tqdm import tqdm
@@ -97,10 +98,11 @@ if __name__ == '__main__':
     parser.add_argument('--save_dir', type=str, default='pred_result', help='directory to save the prediction result')
     parser.add_argument('--large_video', action='store_true', default=False, help='whether to process large video')
     parser.add_argument('--window_median', action='store_true', default=False, help='background = median of each window\'s own frames (needs --large_video)')
+    parser.add_argument('--rolling_median', type=int, default=0, help='background = median of the last N frames, causal like a live node (needs --large_video; 0 = off)')
     parser.add_argument('--output_video', action='store_true', default=False, help='whether to output video with predicted trajectory')
     parser.add_argument('--traj_len', type=int, default=8, help='length of trajectory to draw on video')
     args = parser.parse_args()
-    assert not args.window_median or args.large_video, '--window_median needs --large_video'
+    assert not (args.window_median or args.rolling_median) or args.large_video, '--window_median/--rolling_median need --large_video'
 
     num_workers = args.batch_size if args.batch_size <= 16 else 16
     video_file = args.video_file
@@ -152,7 +154,7 @@ if __name__ == '__main__':
         if large_video:
             dataset = Video_IterableDataset(video_file, seq_len=seq_len, sliding_step=seq_len, bg_mode=bg_mode,
                                             max_sample_num=args.max_sample_num, video_range=video_range,
-                                            window_median=args.window_median)
+                                            window_median=args.window_median, rolling_median=args.rolling_median)
             data_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
             print(f'Video length: {dataset.video_len}')
         else:
@@ -162,7 +164,9 @@ if __name__ == '__main__':
                                                  frame_arr=np.array(frame_list)[:, :, :, ::-1], padding=True)
             data_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=num_workers, drop_last=False)
 
-        for step, (i, x) in enumerate(tqdm(data_loader)):
+        # Total batches, so the progress bar can show percent and time left (a video stream has no len())
+        num_windows = math.ceil(dataset.video_len / seq_len) if large_video else len(dataset)
+        for step, (i, x) in enumerate(tqdm(data_loader, total=math.ceil(num_windows / args.batch_size))):
             x = x.float().to(device)
             with torch.no_grad():
                 y_pred = tracknet(x).detach().cpu()
@@ -176,7 +180,7 @@ if __name__ == '__main__':
         if large_video:
             dataset = Video_IterableDataset(video_file, seq_len=seq_len, sliding_step=1, bg_mode=bg_mode,
                                             max_sample_num=args.max_sample_num, video_range=video_range,
-                                            window_median=args.window_median)
+                                            window_median=args.window_median, rolling_median=args.rolling_median)
             data_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
             video_len = dataset.video_len
             print(f'Video length: {video_len}')
@@ -196,7 +200,7 @@ if __name__ == '__main__':
         frame_i = torch.arange(seq_len-1, -1, -1) # [7, 6, 5, 4, 3, 2, 1, 0]
         y_pred_buffer = torch.zeros((buffer_size, seq_len, HEIGHT, WIDTH), dtype=torch.float32)
         weight = get_ensemble_weight(seq_len, args.eval_mode)
-        for step, (i, x) in enumerate(tqdm(data_loader)):
+        for step, (i, x) in enumerate(tqdm(data_loader, total=math.ceil(num_sample / args.batch_size))):
             x = x.float().to(device)
             b_size, seq_len = i.shape[0], i.shape[1]
             with torch.no_grad():

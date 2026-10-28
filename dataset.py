@@ -4,6 +4,7 @@ import math
 import parse
 import numpy as np
 import pandas as pd
+from collections import deque
 from PIL import Image
 from tqdm import tqdm
 from torch.utils.data import Dataset, IterableDataset
@@ -678,7 +679,8 @@ class Video_IterableDataset(IterableDataset):
         max_sample_num=1800,
         video_range=None,
         median=None,
-        window_median=False
+        window_median=False,
+        rolling_median=0
     ):
         """ Initialize the dataset
             Args:
@@ -698,6 +700,8 @@ class Video_IterableDataset(IterableDataset):
                 median (np.ndarray): Median image.
                 window_median (bool): Use the median of each window's own frames as its background
                     (only for bg_mode 'concat'), instead of one median image for the whole video.
+                rolling_median (int): If > 0, each window's background is the median of the last
+                    `rolling_median` frames up to its newest frame (causal, as a live node would compute it).
         """
         # Image size
         self.HEIGHT = HEIGHT
@@ -706,7 +710,7 @@ class Video_IterableDataset(IterableDataset):
         self.video_file = video_file
         self.cap = cv2.VideoCapture(self.video_file)
         self.video_len = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        self.fps = int(self.cap.get(cv2.CAP_PROP_FPS))
+        self.fps = round(self.cap.get(cv2.CAP_PROP_FPS))  # round, not int(): 29.99 must become 30, not 29
         self.w, self.h = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.w_scaler, self.h_scaler = self.w / self.WIDTH, self.h / self.HEIGHT
 
@@ -715,8 +719,10 @@ class Video_IterableDataset(IterableDataset):
         self.sliding_step = sliding_step
         self.bg_mode = bg_mode
         self.window_median = window_median
-        assert not window_median or bg_mode == 'concat', 'window_median only supports bg_mode "concat"'
-        if self.bg_mode and not self.window_median:
+        self.rolling_median = rolling_median
+        assert not (window_median or rolling_median) or bg_mode == 'concat', 'window/rolling median only support bg_mode "concat"'
+        assert not (window_median and rolling_median), 'use window_median or rolling_median, not both'
+        if self.bg_mode and not self.window_median and not self.rolling_median:
             self.median = median if median is not None else self.__gen_median__(max_sample_num, video_range)
 
     def __iter__(self):
@@ -725,6 +731,7 @@ class Video_IterableDataset(IterableDataset):
         success = True
         start_f_id, end_f_id = 0, 0
         frame_list = []
+        recent = deque(maxlen=self.rolling_median or 1)  # last frames, shrunk to model size, for the rolling median
         while success:
             # Sample frames
             while len(frame_list) < self.seq_len:
@@ -733,6 +740,8 @@ class Video_IterableDataset(IterableDataset):
                     break
                 frame_list.append(frame)
                 end_f_id += 1
+                if self.rolling_median:
+                    recent.append(cv2.resize(frame, (self.WIDTH, self.HEIGHT)))
 
             # No frames left over (video length was a multiple of the step): nothing to pad
             if not frame_list:
@@ -745,6 +754,10 @@ class Video_IterableDataset(IterableDataset):
                 data_idx.extend([(0, end_f_id-1)]*(self.seq_len - len(data_idx)))
                 frame_list.extend([frame_list[-1]]*(self.seq_len - len(frame_list)))
             data_idx = np.array(data_idx)
+            if self.rolling_median:
+                # Median of recent frames, BGR (H, W, 3) -> RGB (3, HEIGHT, WIDTH), the format __gen_median__ returns
+                median = np.median(np.array(recent), 0).astype('uint8')[..., ::-1]
+                self.median = np.moveaxis(median, -1, 0)
             frames = self.__process__(np.array(frame_list)[..., ::-1])
             yield data_idx, frames
 
