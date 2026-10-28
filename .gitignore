@@ -3,6 +3,8 @@ ckpts/
 __pycache__/
 utils/__pycache__/
 *.mp4
+*.mov
+*.MOV
 
 # Local Python environment
 .venv/
